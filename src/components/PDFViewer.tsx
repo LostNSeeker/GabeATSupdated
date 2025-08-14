@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { FileText, AlertCircle, Loader2, Download, Eye, File, Info, ExternalLink } from 'lucide-react';
+import { FileText, AlertCircle, Loader2, Download, Eye, File, Info, ExternalLink, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface PDFViewerProps {
@@ -16,27 +16,82 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
   const [hasError, setHasError] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [showFileInfo, setShowFileInfo] = useState(false);
-  const [iframeFailed, setIframeFailed] = useState(false);
+  const [currentViewMethod, setCurrentViewMethod] = useState<'iframe' | 'object' | 'embed' | 'error'>('iframe');
+  const [retryCount, setRetryCount] = useState(0);
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
   
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const objectRef = useRef<HTMLObjectElement>(null);
+  const embedRef = useRef<HTMLEmbedElement>(null);
+
+  const validatePDFFile = async (file: File): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const arrayBuffer = e.target?.result as ArrayBuffer;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        // Check for PDF header: %PDF-
+        const isPDF = uint8Array.length >= 4 && 
+                     uint8Array[0] === 0x25 && // %
+                     uint8Array[1] === 0x50 && // P
+                     uint8Array[2] === 0x44 && // D
+                     uint8Array[3] === 0x46;   // F
+        
+        console.log('PDF validation result:', isPDF);
+        resolve(isPDF);
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  };
 
   useEffect(() => {
-    // If we have a file, create a blob URL
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setPdfUrl(url);
-      setIsLoading(false);
-      
-      // Cleanup function
-      return () => {
+    let url: string | null = null;
+    
+    console.log('PDFViewer useEffect triggered:', { file, src });
+    
+    const initializeViewer = async () => {
+      // If we have a file, create a blob URL
+      if (file) {
+        console.log('Creating blob URL for file:', file.name, file.type, file.size);
+        
+        // Validate PDF file
+        const isValidPDF = await validatePDFFile(file);
+        if (!isValidPDF) {
+          console.error('File is not a valid PDF');
+          setHasError(true);
+          return;
+        }
+        
+        url = URL.createObjectURL(file);
+        console.log('Created blob URL:', url);
+        setPdfUrl(url);
+        setIsLoading(false);
+        setHasError(false);
+        setCurrentViewMethod('iframe');
+        setRetryCount(0);
+      } else if (src) {
+        console.log('Using provided src URL:', src);
+        setPdfUrl(src);
+        setIsLoading(false);
+        setHasError(false);
+        setCurrentViewMethod('iframe');
+        setRetryCount(0);
+      } else {
+        console.log('No file or src provided');
+        setHasError(true);
+      }
+    };
+    
+    initializeViewer();
+    
+    // Cleanup function
+    return () => {
+      if (url) {
+        console.log('Cleaning up blob URL:', url);
         URL.revokeObjectURL(url);
-      };
-    } else if (src) {
-      // If we have a src URL, use it directly
-      setPdfUrl(src);
-      setIsLoading(false);
-    }
+      }
+    };
   }, [file, src]);
 
   const handleDownload = () => {
@@ -68,23 +123,105 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
   };
 
   const handleIframeLoad = () => {
+    console.log('Iframe loaded successfully');
     setIsLoading(false);
-    setIframeFailed(false);
+    setHasError(false);
   };
 
   const handleIframeError = () => {
-    setIsLoading(false);
-    setIframeFailed(true);
+    console.log('Iframe failed, trying object tag');
+    setCurrentViewMethod('object');
   };
 
   const handleObjectLoad = () => {
+    console.log('Object tag loaded successfully');
     setIsLoading(false);
-    setIframeFailed(false);
+    setHasError(false);
   };
 
   const handleObjectError = () => {
+    console.log('Object tag failed, trying embed tag');
+    setCurrentViewMethod('embed');
+  };
+
+  const handleEmbedError = () => {
+    console.log('Embed tag failed, showing error state');
     setIsLoading(false);
-    setIframeFailed(true);
+    setHasError(true);
+    setCurrentViewMethod('error');
+  };
+
+  const retryViewer = () => {
+    console.log('Retrying PDF viewer');
+    setRetryCount(prev => prev + 1);
+    setHasError(false);
+    setCurrentViewMethod('iframe');
+    setIsLoading(true);
+  };
+
+  const renderPDFViewer = () => {
+    if (!pdfUrl) {
+      return (
+        <div className="h-full flex items-center justify-center bg-gray-100">
+          <div className="text-center">
+            <Loader2 className="h-8 w-8 animate-spin text-gray-400 mx-auto mb-2" />
+            <p className="text-gray-500">Loading PDF...</p>
+          </div>
+        </div>
+      );
+    }
+
+    switch (currentViewMethod) {
+      case 'iframe':
+        return (
+          <iframe
+            key={`iframe-${retryCount}`}
+            ref={iframeRef}
+            src={`${pdfUrl}#toolbar=1&navpanes=1&scrollbar=1&view=FitH`}
+            title={title || 'PDF Document'}
+            className="w-full h-full border-0"
+            onLoad={handleIframeLoad}
+            onError={handleIframeError}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+            style={{ minHeight: '600px' }}
+          />
+        );
+      
+      case 'object':
+        return (
+          <object
+            key={`object-${retryCount}`}
+            ref={objectRef}
+            data={pdfUrl}
+            type="application/pdf"
+            className="w-full h-full"
+            onLoad={handleObjectLoad}
+            onError={handleObjectError}
+          >
+            <div className="h-full flex items-center justify-center bg-gray-100">
+              <div className="text-center">
+                <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600 mb-4">PDF cannot be displayed in this browser.</p>
+              </div>
+            </div>
+          </object>
+        );
+      
+      case 'embed':
+        return (
+          <embed
+            key={`embed-${retryCount}`}
+            ref={embedRef}
+            src={pdfUrl}
+            type="application/pdf"
+            className="w-full h-full"
+            onError={handleEmbedError}
+          />
+        );
+      
+      default:
+        return null;
+    }
   };
 
   if (hasError) {
@@ -99,13 +236,22 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
         <AlertCircle className="h-12 w-12 text-gray-400 mb-4" />
         <h3 className="text-lg font-semibold text-white mb-2">Unable to load PDF</h3>
         <p className="text-sm text-gray-400 mb-4">
-          The PDF file could not be displayed. This might be due to browser restrictions or file
-          format issues.
+          {file && file.type !== 'application/pdf' 
+            ? 'The uploaded file does not appear to be a valid PDF file. Please ensure you are uploading a PDF document.'
+            : 'The PDF file could not be displayed. This might be due to browser restrictions, file corruption, or format issues.'
+          }
         </p>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap justify-center">
+          <button
+            onClick={retryViewer}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Retry
+          </button>
           <button
             onClick={handleDownload}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
           >
             <Download className="h-4 w-4" />
             Download PDF
@@ -116,7 +262,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
           >
-            <FileText className="h-4 w-4" />
+            <ExternalLink className="h-4 w-4" />
             Open in new tab
           </a>
         </div>
@@ -183,6 +329,13 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
             {/* Action Buttons */}
             <div className="flex gap-2">
               <button
+                onClick={() => setShowDebugInfo(!showDebugInfo)}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors text-sm"
+              >
+                <Info className="h-4 w-4" />
+                Debug
+              </button>
+              <button
                 onClick={handleDownload}
                 className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
               >
@@ -204,6 +357,39 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
 
         {/* PDF Content */}
         <div className="flex-1 bg-gray-800 p-4 overflow-auto">
+          {showDebugInfo && (
+            <div className="mb-4 p-4 bg-yellow-900/50 border border-yellow-700 rounded-lg">
+              <h4 className="text-sm font-medium text-yellow-300 mb-2">Debug Information:</h4>
+              <div className="text-xs text-yellow-200 space-y-1">
+                <p><strong>File:</strong> {file?.name || 'No file'}</p>
+                <p><strong>Type:</strong> {file?.type || 'No type'}</p>
+                <p><strong>Size:</strong> {file ? formatFileSize(file.size) : 'No size'}</p>
+                <p><strong>PDF URL:</strong> {pdfUrl || 'No URL'}</p>
+                <p><strong>Current Method:</strong> {currentViewMethod}</p>
+                <p><strong>Retry Count:</strong> {retryCount}</p>
+                <p><strong>Has Error:</strong> {hasError ? 'Yes' : 'No'}</p>
+                <p><strong>Is Loading:</strong> {isLoading ? 'Yes' : 'No'}</p>
+                <button
+                  onClick={() => {
+                    console.log('PDF Debug Info:', {
+                      file: file?.name,
+                      type: file?.type,
+                      size: file?.size,
+                      pdfUrl,
+                      currentViewMethod,
+                      retryCount,
+                      hasError,
+                      isLoading
+                    });
+                  }}
+                  className="mt-2 px-2 py-1 bg-yellow-700 text-yellow-100 rounded text-xs hover:bg-yellow-600"
+                >
+                  Log to Console
+                </button>
+              </div>
+            </div>
+          )}
+          
           {showFileInfo ? (
             // File info mode
             <div className="h-full bg-gray-700 rounded-lg p-8 flex flex-col items-center justify-center text-center">
@@ -261,66 +447,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ src, title, className, fil
           ) : (
             // PDF viewer mode (default)
             <div className="h-full bg-white rounded-lg shadow-lg overflow-hidden">
-              {pdfUrl ? (
-                <div className="h-full">
-                  {/* Try iframe first */}
-                  {!iframeFailed && (
-                    <iframe
-                      ref={iframeRef}
-                      src={pdfUrl}
-                      title={title || 'PDF Document'}
-                      className="w-full h-full border-0"
-                      onLoad={handleIframeLoad}
-                      onError={handleIframeError}
-                      sandbox="allow-scripts allow-same-origin"
-                    />
-                  )}
-                  
-                  {/* Fallback to object tag if iframe fails */}
-                  {iframeFailed && (
-                    <object
-                      ref={objectRef}
-                      data={pdfUrl}
-                      type="application/pdf"
-                      className="w-full h-full"
-                      onLoad={handleObjectLoad}
-                      onError={handleObjectError}
-                    >
-                      <div className="h-full flex items-center justify-center bg-gray-100">
-                        <div className="text-center">
-                          <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                          <p className="text-gray-600 mb-4">PDF cannot be displayed in this browser.</p>
-                          <div className="flex gap-3 justify-center">
-                            <button
-                              onClick={handleDownload}
-                              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                            >
-                              <Download className="h-4 w-4" />
-                              Download PDF
-                            </button>
-                            <a
-                              href={pdfUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                              Open in New Tab
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-                    </object>
-                  )}
-                </div>
-              ) : (
-                <div className="h-full flex items-center justify-center bg-gray-100">
-                  <div className="text-center">
-                    <Loader2 className="h-8 w-8 animate-spin text-gray-400 mx-auto mb-2" />
-                    <p className="text-gray-500">Loading PDF...</p>
-                  </div>
-                </div>
-              )}
+              {renderPDFViewer()}
             </div>
           )}
         </div>

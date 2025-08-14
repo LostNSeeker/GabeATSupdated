@@ -22,8 +22,10 @@ export default function Home() {
   const [processingError, setProcessingError] = useState<string | null>(null);
 
   const handleFileUpload = useCallback((file: File) => {
+    console.log('File uploaded:', file.name, file.type, file.size);
     setUploadedFile(file);
     const url = URL.createObjectURL(file);
+    console.log('Created file URL:', url);
     setFileUrl(url);
     setShowSplitView(false);
     setProcessedCV(null);
@@ -111,12 +113,16 @@ export default function Home() {
     if (!uploadedFile) return null;
 
     const fileType = getFileType(uploadedFile);
+    console.log('Rendering file viewer for type:', fileType, 'file:', uploadedFile.name);
 
     if (fileType === 'application/pdf') {
+      console.log('Rendering PDFViewer component');
       return <PDFViewer file={uploadedFile} title={uploadedFile.name} />;
     } else if (fileType.startsWith('video/')) {
+      console.log('Rendering VideoPlayer component');
       return <VideoPlayer src={fileUrl} title={uploadedFile.name} />;
     } else {
+      console.log('Rendering unsupported file type viewer');
       return (
         <div className="h-full flex items-center justify-center bg-gray-800 rounded-lg">
           <div className="text-center">
@@ -174,6 +180,8 @@ export default function Home() {
               onUpload={handleFileUpload}
               maxSize={100}
             />
+            
+        
           </div>
         </div>
       </div>

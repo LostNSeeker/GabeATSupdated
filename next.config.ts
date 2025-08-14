@@ -1,9 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['pdf-parse', 'mammoth'],
-  },
+  serverExternalPackages: ['pdf-parse', 'mammoth'],
   webpack: (config, { isServer }) => {
     if (!isServer) {
       // Don't resolve 'fs' module on the client to prevent this error on build --> Error: Can't resolve 'fs'
@@ -23,6 +21,20 @@ const nextConfig: NextConfig = {
       };
     }
     return config;
+  },
+  // Add headers for PDF viewing
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+        ],
+      },
+    ];
   },
 };
 
